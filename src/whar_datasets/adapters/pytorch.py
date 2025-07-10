@@ -4,6 +4,7 @@ import numpy as np
 from torch import Tensor
 import torch
 from torch.utils.data import Dataset, Subset, DataLoader
+from tqdm import tqdm
 
 from whar_datasets.core.processing import process
 from whar_datasets.core.sampling import get_label, get_window
@@ -30,6 +31,9 @@ class PytorchAdapter(Dataset[Tuple[Tensor, Tensor]]):
         print(f"activity_ids: {np.sort(self.session_metadata['activity_id'].unique())}")
 
         self.seed = cfg.dataset.training.seed
+
+        self.X: Tensor | None = None
+        self.y: Tensor | None = None
 
         torch.manual_seed(self.seed)
         random.seed(self.seed)
@@ -60,6 +64,9 @@ class PytorchAdapter(Dataset[Tuple[Tensor, Tensor]]):
             self.window_metadata,
             self.windows,
         )
+
+        # prepare windows
+        self._prepare_windows()
 
         # specify split subsets
         train_set = Subset(self, self.train_indices)
@@ -100,23 +107,37 @@ class PytorchAdapter(Dataset[Tuple[Tensor, Tensor]]):
             self.session_metadata, self.window_metadata.iloc[indices]
         )
 
+    def _prepare_windows(self):
+        x_list = []
+        y_list = []
+
+        loop = tqdm(range(len(self.window_metadata)))
+        loop.set_description("Preparing windows")
+
+        for i in loop:
+            label = get_label(i, self.window_metadata, self.session_metadata)
+            window = get_window(
+                i, self.cfg, self.windows_dir, self.window_metadata, self.windows
+            )
+            window = normalize_window(self.cfg, self.norm_params, window)
+
+            y_list.append(label)
+            x_list.append(torch.tensor(window.values, dtype=torch.float32))
+
+        self.y = torch.tensor(y_list, dtype=torch.long)
+        self.X = torch.stack(x_list)
+
+        # free memory
+        del self.windows
+        self.windows = None
+
     def __len__(self) -> int:
         return len(self.window_metadata)
 
     def __getitem__(self, index: int) -> Tuple[Tensor, Tensor]:
-        # get label
-        label = get_label(index, self.window_metadata, self.session_metadata)
+        if self.X is None or self.y is None:
+            raise RuntimeError(
+                "Dataloaders must be initialized before accessing items."
+            )
 
-        # get window
-        window = get_window(
-            index, self.cfg, self.windows_dir, self.window_metadata, self.windows
-        )
-
-        # normalize window
-        window = normalize_window(self.cfg, self.norm_params, window)
-
-        # convert to tensors
-        y = torch.tensor(label, dtype=torch.long)
-        x = torch.tensor(window.values, dtype=torch.float32)
-
-        return y, x
+        return self.y[index], self.X[index]
