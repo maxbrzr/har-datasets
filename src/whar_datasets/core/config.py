@@ -16,7 +16,7 @@ NON_CHANNEL_COLS: List[str] = [
 ]
 
 
-class NormType(Enum):
+class NormType(str, Enum):
     STD_GLOBALLY = "std_globally"
     MIN_MAX_GLOBALLY = "min_max_globally"
     ROBUST_SCALE_GLOBALLY = "robust_scale_globally"
